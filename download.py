@@ -6,10 +6,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 def download_year_and_month(
-    year: int, month: int, data_split: str, custom_cache_dir: Path, verbose: bool = True
+    year: str, month: str, data_split: str, custom_cache_dir: Path, verbose: bool = True
 ) -> Path | None:
-    print(f"Downloading data for {year}-{month} to {custom_cache_dir}")
-
     datasets.config.DOWNLOADED_DATASETS_PATH = custom_cache_dir
 
     if verbose:
@@ -35,7 +33,9 @@ def download_year_and_month(
 def download_in_parallel(
     start_year: int,
     end_year: int,
-    num_workers: int = 32,
+    start_month: int = 1,
+    end_month: int = 12,
+    num_workers: int = 12,
     data_split: str = "train",
     custom_cache_dir: Path = Path("data"),
     verbose: bool = True,
@@ -46,7 +46,20 @@ def download_in_parallel(
         # Create a list to store future results
         futures = []
         for year in range(start_year, end_year + 1):
+
+            if year == start_year:
+                months = months[start_month - 1 :]
+
+            if year == end_year:
+                months = months[: end_month - 1]
+
+            print(f"Downloading data for months {months}")
+
+            year = f"{year:04d}"
+
             for month in months:
+                month = f"{month:02d}"
+
                 # Submit download tasks to the executor
                 futures.append(
                     executor.submit(
@@ -69,7 +82,9 @@ def download_in_parallel(
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--start_year", type=int, help="Year to download")
-    parser.add_argument("--end_year", type=int, help="Month to download")
+    parser.add_argument("--end_year", type=int, help="Year to end download")
+    parser.add_argument("--start_month", type=int, help="Month to start download")
+    parser.add_argument("--end_month", type=int, help="Month to end download")
     parser.add_argument("--data_split", type=str, help="Data split to download")
     parser.add_argument(
         "--custom_cache_dir", type=str, help="Custom cache directory to download data"
@@ -78,10 +93,15 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    if args.verbose:
+        print(f"Using parameters:\n{args}\n")
+
     download_in_parallel(
         start_year=args.start_year,
         end_year=args.end_year,
         data_split=args.data_split,
+        start_month=args.start_month,
+        end_month=args.end_month,
         custom_cache_dir=Path(args.custom_cache_dir),
         verbose=args.verbose,
     )
