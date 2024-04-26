@@ -9,6 +9,7 @@ from pathlib import Path
 import torch
 import gc
 import json
+from tqdm import tqdm
 
 DICT_OF_DAYS_IN_MONTH = {
     1: 31,
@@ -61,7 +62,7 @@ def get_ordered_file_list_from_date_range(
         print(f"Start year: {start_year}, Start month: {start_month}")
         print(f"End year: {end_year}, End month: {end_month}")
 
-    for year in range(start_year, end_year + 1):
+    for year in tqdm(range(start_year, end_year + 1), desc="Adding files to process"):
         if year == start_year:
             start_month = start_month
         else:
@@ -85,8 +86,6 @@ def get_ordered_file_list_from_date_range(
                     if file.name.startswith("E3SM-MMF.mli."):
                         path_to_file = file
 
-                        print(f"Adding file: {path_to_file}")
-
                         file_list.append(path_to_file)
             else:
                 print(f"Folder {folder} does not exist")
@@ -108,6 +107,22 @@ def get_ordered_file_list_from_date_range(
             ), f"Time difference between {file_list[i].name} and {file_list[i-1].name} {time_diff}.\nPrevious interp dict:{prev_interp_dict}.\nCurrent interp dict: {current_interp_dict}"
 
     return file_list
+
+
+def year_and_month_to_time(year: int, month: int) -> int:
+    """
+    Convert year and month to time.
+    """
+    SECONDS_IN_A_DAY = 24 * 60 * 60
+
+    # Number of seconds in the years up to the point
+    total_time = (int(year) - 1) * 365 * SECONDS_IN_A_DAY
+
+    # Number of seconds in the months of the current year
+    for month in range(1, int(month)):
+        total_time += DICT_OF_DAYS_IN_MONTH[month] * SECONDS_IN_A_DAY
+
+    return total_time
 
 
 def file_name_to_time(file_name: str) -> tuple[dict[str, int], int]:
@@ -196,9 +211,7 @@ def save_arrays_from_file_list(
     save_as_torch_tensor: bool = False,
 ) -> None:
 
-    for file_num, file in enumerate(list_of_files):
-        print(f"File is: {file}")
-
+    for file_num, file in tqdm(enumerate(list_of_files), desc="Processing files"):
         netcdf_data = xr.open_dataset(file)
 
         array_shape = (total_num_of_indices, N_COLS)
@@ -263,6 +276,21 @@ def save_arrays_from_file_list(
             gc.collect()
 
 
+def remove_files_that_are_outside_of_processing_range(
+    processing_range: tuple[int, int], list_of_files: list[Path]
+) -> list[Path]:
+
+    new_file_list = []
+
+    for file in list_of_files:
+        time_of_file = file_name_to_time(file.name)[1]
+
+        if time_of_file >= processing_range[0] and time_of_file <= processing_range[1]:
+            new_file_list.append(file)
+
+    return new_file_list
+
+
 if __name__ == "__main__":
     # Create an argparse to get location of data
     parser = argparse.ArgumentParser(description="Process ClimSim data")
@@ -304,6 +332,34 @@ if __name__ == "__main__":
         help="Which variables to complete predictions with",
     )
 
+    parser.add_argument(
+        "--start_year",
+        type=int,
+        default=None,
+        help="Starting year to process",
+    )
+
+    parser.add_argument(
+        "--start_month",
+        type=int,
+        default=None,
+        help="Starting month to process",
+    )
+
+    parser.add_argument(
+        "--end_year",
+        type=int,
+        default=None,
+        help="Ending year to process",
+    )
+
+    parser.add_argument(
+        "--end_month",
+        type=int,
+        default=None,
+        help="End month to process",
+    )
+
     args = parser.parse_args()
 
     data_path = Path(args.data_path)
@@ -322,7 +378,6 @@ if __name__ == "__main__":
     test_file_list = get_ordered_file_list_from_date_range(
         (START_OF_TEST_SPLIT, END_OF_TEST_SPLIT), data_path / "train", args.verbose
     )
-
     length_of_list = len(train_file_list)
 
     if args.verbose:
@@ -330,7 +385,30 @@ if __name__ == "__main__":
         print(f"Val file list length: {len(val_file_list)}")
         print(f"Test file list length: {len(test_file_list)}")
 
-    data_split_file_list_to_proc = [train_file_list, val_file_list, test_file_list]
+    start_time_of_proc = year_and_month_to_time(args.start_year, args.start_month)
+    end_time_of_proc = year_and_month_to_time(args.end_year, args.end_month + 1)
+
+    if args.verbose:
+        print(f"Start time of processing: {start_time_of_proc}")
+        print(f"End time of processing: {end_time_of_proc}")
+
+    data_split_file_list_to_proc = []
+
+    for name, files in [
+        ("train", train_file_list),
+        ("val", val_file_list),
+        ("test", test_file_list),
+    ]:
+
+        files_in_processing_region = remove_files_that_are_outside_of_processing_range(
+            (start_time_of_proc, end_time_of_proc), files
+        )
+
+        print(
+            f"Number of files in processing region: {len(files_in_processing_region)}"
+        )
+
+        data_split_file_list_to_proc.append((name, files_in_processing_region))
 
     dict_of_variables_and_indices_to_save = convert_json_to_indices(
         variable_selection_file=args.variable_selection
@@ -346,14 +424,12 @@ if __name__ == "__main__":
         * (total_num_of_indices / TOTAL_NUM_OF_INDICES_WITHOUT_SUB_SELECTION)
     )
 
-    for file_list in data_split_file_list_to_proc:
-        name_of_partition = (
-            "train"
-            if file_list == train_file_list
-            else "val" if file_list == val_file_list else "test"
-        )
+    if args.verbose:
+        print(f"Number of CDFs per chunk: {n_cdfs_per_chunk}")
 
-        path_to_save = output_path / name_of_partition
+    for name, file_list in data_split_file_list_to_proc:
+
+        path_to_save = output_path / name
 
         if not path_to_save.exists():
             path_to_save.mkdir(parents=True)
