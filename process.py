@@ -3,16 +3,12 @@ Script for processing ClimSim data, converting into chunks which are easily used
 """
 
 import numpy as np
-import netCDF4 as nc
 import xarray as xr
 import argparse
 from pathlib import Path
-from tqdm import tqdm
 import torch
 import gc
 import json
-
-from src.common import repo_root
 
 DICT_OF_DAYS_IN_MONTH = {
     1: 31,
@@ -87,7 +83,10 @@ def get_ordered_file_list_from_date_range(
 
                     # We only take input files for the predictions
                     if file.name.startswith("E3SM-MMF.mli."):
-                        path_to_file = folder / file
+                        path_to_file = file
+
+                        print(f"Adding file: {path_to_file}")
+
                         file_list.append(path_to_file)
             else:
                 print(f"Folder {folder} does not exist")
@@ -162,8 +161,12 @@ def convert_json_to_indices(
     Convert a json file to a list of indices.
     """
 
+    print(f"Variable selection file: {variable_selection_file}")
+
     with open(variable_selection_file, "r") as f:
         variable_selection_dict = json.load(f)
+
+    print(f"Variable selection dict: {variable_selection_dict}")
 
     with open(all_variables, "r") as f:
         all_variables_list = json.load(f)
@@ -176,7 +179,10 @@ def convert_json_to_indices(
 
     # Assert that the value of the maximal indices is less than the number of indices
     for variable, indices in variable_selection_dict.items():
-        assert max(indices) < all_variables_with_num_of_indices_list[variable]
+        assert max(indices) <= all_variables_with_num_of_indices_list[variable], (
+            f"Max index {max(indices)} is greater than the number of indices "
+            f"{all_variables_with_num_of_indices_list[variable]} for variable {variable}"
+        )
 
     return variable_selection_dict
 
@@ -187,13 +193,15 @@ def save_arrays_from_file_list(
     total_num_of_indices: int,
     path_to_save: Path,
     n_cdfs_per_chunk: int,
-    save_as_torch: bool = False,
+    save_as_torch_tensor: bool = False,
 ) -> None:
 
     for file_num, file in enumerate(list_of_files):
+        print(f"File is: {file}")
+
         netcdf_data = xr.open_dataset(file)
 
-        array_shape = (1, total_num_of_indices, N_COLS)
+        array_shape = (total_num_of_indices, N_COLS)
         individual_array = np.zeros(array_shape)
 
         starting_index = 0
@@ -222,7 +230,10 @@ def save_arrays_from_file_list(
 
         current_arrays.append(individual_array)
 
-        if index_of_chunked_array == n_cdfs_per_chunk - 1:
+        if (
+            index_of_chunked_array == n_cdfs_per_chunk - 1
+            or file_num == len(list_of_files) - 1
+        ):
 
             # Concatenate along first dimension
             concatenated_array = np.concatenate(current_arrays, axis=0)
@@ -230,7 +241,7 @@ def save_arrays_from_file_list(
 
             name_of_array = f"{starting_time_of_chunk}_{ending_time_of_chunk}"
 
-            if save_as_torch:
+            if save_as_torch_tensor:
                 torch_array = torch.tensor(concatenated_array, dtype=torch.float32)
 
                 torch.save(
@@ -295,20 +306,21 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
+    data_path = Path(args.data_path)
     output_path = Path(args.output_path)
 
     train_file_list = get_ordered_file_list_from_date_range(
         (START_OF_TRAIN_SPLIT, END_OF_TRAIN_SPLIT),
-        args.data_path / "train",
+        data_path / "train",
         args.verbose,
     )
 
     val_file_list = get_ordered_file_list_from_date_range(
-        (START_OF_VAL_SPLIT, END_OF_VAL_SPLIT), args.data_path / "train", args.verbose
+        (START_OF_VAL_SPLIT, END_OF_VAL_SPLIT), data_path / "train", args.verbose
     )
 
     test_file_list = get_ordered_file_list_from_date_range(
-        (START_OF_TEST_SPLIT, END_OF_TEST_SPLIT), args.data_path / "train", args.verbose
+        (START_OF_TEST_SPLIT, END_OF_TEST_SPLIT), data_path / "train", args.verbose
     )
 
     length_of_list = len(train_file_list)
@@ -321,7 +333,7 @@ if __name__ == "__main__":
     data_split_file_list_to_proc = [train_file_list, val_file_list, test_file_list]
 
     dict_of_variables_and_indices_to_save = convert_json_to_indices(
-        args.variable_selection
+        variable_selection_file=args.variable_selection
     )
 
     # Get total number of indices
