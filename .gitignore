@@ -1,3 +1,4 @@
 climsim-trajectory-data-venv
 data
 torch_data
+run.sh
