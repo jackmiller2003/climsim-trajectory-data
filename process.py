@@ -235,6 +235,8 @@ def save_arrays_from_file_list(
                 starting_index : starting_index + len(indices_to_extract)
             ] = variable_values
 
+            starting_index += len(indices_to_extract)
+
         index_of_chunked_array = file_num % n_cdfs_per_chunk
 
         if index_of_chunked_array == 0:
@@ -249,7 +251,16 @@ def save_arrays_from_file_list(
         ):
 
             # Concatenate along first dimension
-            concatenated_array = np.concatenate(current_arrays, axis=0)
+            correct_shape = (
+                len(current_arrays),
+                individual_array.shape[0],
+                individual_array.shape[1],
+            )
+
+            concatenated_array = np.stack(current_arrays, axis=0)
+
+            assert concatenated_array.shape == correct_shape
+
             ending_time_of_chunk = file_name_to_time(file.name)[1]
 
             name_of_array = f"{starting_time_of_chunk}_{ending_time_of_chunk}"
