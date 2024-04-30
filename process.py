@@ -261,15 +261,11 @@ def save_arrays_from_file_list(
                     torch_array,
                     path_to_save / f"{name_of_array}.pt",
                 )
-
-                del torch_array
             else:
                 np.save(
                     path_to_save / f"{name_of_array}.npy",
                     concatenated_array,
                 )
-
-            del concatenated_array
 
         # Just in case the arrays stay on the heap
         if file_num % 1000 == 0:
@@ -378,6 +374,7 @@ if __name__ == "__main__":
     test_file_list = get_ordered_file_list_from_date_range(
         (START_OF_TEST_SPLIT, END_OF_TEST_SPLIT), data_path / "train", args.verbose
     )
+
     length_of_list = len(train_file_list)
 
     if args.verbose:
@@ -433,6 +430,10 @@ if __name__ == "__main__":
 
         if not path_to_save.exists():
             path_to_save.mkdir(parents=True)
+
+        if args.verbose:
+            print(f"List of files being passed has length: {len(file_list)}")
+            print(f"Using n_cdfs_per_chunk: {n_cdfs_per_chunk}")
 
         save_arrays_from_file_list(
             list_of_files=file_list,

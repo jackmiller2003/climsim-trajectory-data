@@ -3,3 +3,4 @@ data
 torch_data
 run.sh
 pbs_jobs
+normalisation.pt
